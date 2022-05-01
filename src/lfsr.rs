@@ -117,6 +117,14 @@ pub fn berlekamp_massey<F>(field: F, sequence: &[F::El]) -> Vector<VectorOwned<F
     return current;
 }
 
+pub fn attack_lfsr<F>(field: F, sequence: &[F::El]) -> LFSR<F>
+    where F: Ring
+{
+    let mut coefficients = berlekamp_massey(&field, sequence).subvector(1..).into_owned();
+    coefficients.scale(&field.neg(field.one()), &field);
+    return LFSR::new(field, coefficients);
+}
+
 #[cfg(test)]
 use feanor_la::primitive::*;
 
