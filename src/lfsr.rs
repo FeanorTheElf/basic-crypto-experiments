@@ -5,6 +5,7 @@ use feanor_la::ring::*;
 use feanor_la::embedding::*;
 
 use std::ops::Index;
+use std::cmp::max;
 
 pub struct LFSR<R = F2Type, V = VectorOwned<<R as Ring>::El>>
     where R: Ring, V: VectorView<<R as Ring>::El>
@@ -97,12 +98,12 @@ pub fn berlekamp_massey<F>(field: F, sequence: &[F::El]) -> Vector<VectorOwned<F
             let factor = field.neg(field.div(discrepancy.clone(), &last_discrepancy));
             let shift = (n as i64 - last_discrepancy_index) as usize;
             
-            current = Vector::from_fn(shift + last_discrepancy_vector.len(),
+            current = Vector::from_fn(max(shift + last_discrepancy_vector.len(), current.len()),
                 |j| if j >= current.len() && j < shift {
                     field.zero()
                 } else if j >= current.len() {
                     field.mul_ref(&last_discrepancy_vector[j - shift], &factor)
-                } else if j < shift {
+                } else if j < shift || j >= shift + last_discrepancy_vector.len() {
                     current[j].clone()
                 } else {
                     field.add_ref(field.mul_ref(&last_discrepancy_vector[j - shift], &factor), &current[j].clone())
@@ -121,6 +122,12 @@ pub fn attack_lfsr<F>(field: F, sequence: &[F::El]) -> LFSR<F>
     where F: Ring
 {
     let mut coefficients = berlekamp_massey(&field, sequence).subvector(1..).into_owned();
+
+    if field.is_zero(coefficients.at(coefficients.len() - 1)) {
+        let trailing_zeros = (0..coefficients.len()).rev().take_while(|i| field.is_zero(coefficients.at(*i))).count();
+        coefficients = coefficients.subvector(..(coefficients.len() - trailing_zeros)).into_owned();
+    }
+
     coefficients.scale(&field.neg(field.one()), &field);
     return LFSR::new(field, coefficients);
 }
@@ -158,4 +165,16 @@ fn test_berlekamp_massey() {
     );
     let sequence = lfsr.value_stream(vec![i(1), i(0), i(1)]).take(20).collect::<Vec<_>>();
     assert!(Vector::from_array([i(1), i(0), i(1), i(1)]).eq(berlekamp_massey(F2, &sequence[..]), &F2));
+}
+
+#[test]
+fn test_attack_lfsr() {
+    let i = z_hom(&F2);
+    let lfsr = LFSR::new(F2, Vector::from_array([i(0), i(0), i(1), i(1)]));
+    let mut value_stream = lfsr.value_stream(vec![i(1), i(0), i(1), i(0)]);
+    let broken_lfsr = attack_lfsr(F2, &value_stream.by_ref().take(10).collect::<Vec<_>>()[..]);
+    let mut seed = value_stream.by_ref().take(4).collect::<Vec<_>>();
+    seed.reverse();
+    let broken_value_stream = broken_lfsr.value_stream(seed);
+    assert_eq!(value_stream.take(20).collect::<Vec<_>>(), broken_value_stream.take(20).collect::<Vec<_>>());
 }
